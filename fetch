@@ -1,0 +1,114 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import os
+import sys
+from multiprocessing.dummy import Pool
+from urllib.parse import parse_qs, urlparse
+from urllib.request import urlopen
+
+import xlsxwriter
+from lxml import html
+
+
+BASE_URL = 'https://www.drive.ru'
+
+
+def usage():
+    print("usage: %s <brand> [<brand> ...]" %
+          os.path.basename(__file__), file=sys.stderr)
+    sys.exit(1)
+
+
+def model_urls(brands):
+    def urls():
+        for brand in brands:
+            brand = brand.lower()
+            yield '%s/brands/%s' % (BASE_URL, brand)
+            yield '%s/brands/%s?previous=true' % (BASE_URL, brand)
+
+    pool = Pool()
+
+    for response in pool.map(urlopen, urls()):
+        for link in html.parse(response).getroot().find_class('car-icon'):
+            yield [link.attrib["href"],
+                   "previous" in parse_qs(urlparse(response.url).query)]
+
+    pool.close()
+    pool.join()
+
+
+def get_car_builds(url, previous):
+    response = urlopen(BASE_URL + url)
+    _, brand, _, year, model = url.split('/')
+    for build in html.parse(response).getroot().xpath(
+            ("//div[@class='car-builds-table']"
+             "/table/tbody/tr[not(contains(@class, 'dv-mobile-row'))]")):
+        if previous:
+            title = build.xpath("./th[1]/a")[0].text_content()
+            price = ""
+            engine = build.xpath("./td[1]/a")[0].text_content()
+            horsepower = build.xpath("./td[2]/a")[0].text_content()
+            drive = build.xpath("./td[3]/a")[0].text_content()
+            transmission = build.xpath("./td[4]/a")[0].text_content()
+        else:
+            title = build.xpath("./th[1]/a")[0].text_content()
+            price = build.xpath("./td[1]/a")[0].text_content()
+            engine = build.xpath("./td[2]/a")[0].text_content()
+            horsepower = build.xpath("./td[3]/a")[0].text_content()
+            drive = build.xpath("./td[4]/a")[0].text_content()
+            transmission = build.xpath("./td[5]/a")[0].text_content()
+
+        yield (brand, model, year, title, price, engine, horsepower, drive,
+               transmission, previous)
+
+
+def report(results):
+    workbook = xlsxwriter.Workbook("report.xlsx")
+    sheet = workbook.add_worksheet()
+
+    sheet.write(0, 0, "Марка")
+    sheet.write(0, 1, "Модель")
+    sheet.write(0, 2, "Год")
+    sheet.write(0, 3, "Комплектация")
+    sheet.write(0, 4, "Цена")
+    sheet.write(0, 5, "Мотор")
+    sheet.write(0, 6, "л.с.")
+    sheet.write(0, 7, "Привод")
+    sheet.write(0, 8, "Коробка передач")
+    sheet.write(0, 9, "Актуальная / Архив")
+
+    row = 1
+    for builds in results:
+        for build in builds:
+            sheet.write(row, 0, build[0])
+            sheet.write(row, 1, build[1])
+            sheet.write(row, 2, build[2])
+            sheet.write(row, 3, build[3])
+            sheet.write(row, 4, build[4])
+            sheet.write(row, 5, build[5])
+            sheet.write(row, 6, build[6])
+            sheet.write(row, 7, build[7])
+            sheet.write(row, 8, build[8])
+            sheet.write(row, 9, "Архив" if build[9] else "Актуальная")
+            row += 1
+
+    workbook.close()
+
+
+def main():
+    if len(sys.argv) < 2:
+        usage()
+
+    models = list(model_urls(sys.argv[1:]))
+
+    pool = Pool()
+
+    report(pool.map(lambda args: get_car_builds(*args), models))
+
+    pool.close()
+    pool.join()
+
+
+if __name__ == '__main__':
+    main()
