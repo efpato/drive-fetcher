@@ -5,8 +5,8 @@ import os
 import sys
 from multiprocessing.dummy import Pool
 from urllib.parse import parse_qs, urlparse
-from urllib.request import urlopen
 
+import requests
 import xlsxwriter
 from lxml import html
 
@@ -29,8 +29,9 @@ def model_urls(brands):
 
     pool = Pool()
 
-    for response in pool.map(urlopen, urls()):
-        for link in html.parse(response).getroot().find_class('car-icon'):
+    responses = pool.map(lambda url: requests.get(url, stream=True), urls())
+    for response in responses:
+        for link in html.parse(response.raw).xpath("//a[@class='car-icon']"):
             yield [link.attrib["href"],
                    "previous" in parse_qs(urlparse(response.url).query)]
 
@@ -39,9 +40,9 @@ def model_urls(brands):
 
 
 def get_car_builds(url, previous):
-    response = urlopen(BASE_URL + url)
+    response = requests.get(BASE_URL + url, stream=True)
     _, brand, _, year, model = url.split('/')
-    for build in html.parse(response).getroot().xpath(
+    for build in html.parse(response.raw).xpath(
             ("//div[@class='car-builds-table']"
              "/table/tbody/tr[not(contains(@class, 'dv-mobile-row'))]")):
         if previous:
